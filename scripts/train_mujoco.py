@@ -13,6 +13,7 @@ from relax.algorithm.qsm import QSM
 from relax.algorithm.dipo import DIPO
 from relax.algorithm.qvpo import QVPO
 from relax.algorithm.sdac import SDAC
+from relax.algorithm.sdac_soft import SDAC_Soft
 from relax.buffer import TreeBuffer
 from relax.network.sac import create_sac_net
 from relax.network.dacer import create_dacer_net
@@ -20,6 +21,7 @@ from relax.network.qsm import create_qsm_net
 from relax.network.dipo import create_dipo_net
 from relax.network.sdac import create_sdac_net
 from relax.network.qvpo import create_qvpo_net
+from relax.network.sdac_soft import create_sdac_net_soft
 from relax.trainer.off_policy import OffPolicyTrainer
 from relax.env import create_env, create_vector_env
 from relax.utils.experience import Experience, ObsActionPair
@@ -49,6 +51,8 @@ if __name__ == "__main__":
     parser.add_argument("--target_entropy_scale", type=float, default=1.5)
     parser.add_argument("--debug", action='store_true', default=False)
     parser.add_argument("--use_ema_policy", default=True, action="store_true")
+    parser.add_argument("--beta", type=float, default=1.0)
+    parser.add_argument("--exp_clip", type=float, default=10.0)
     args = parser.parse_args()
 
     if args.debug:
@@ -89,6 +93,18 @@ if __name__ == "__main__":
                            delay_alpha_update=args.delay_alpha_update,
                              lr_schedule_end=args.lr_schedule_end,
                              use_ema=args.use_ema_policy)
+    elif args.alg == 'sdac_soft':
+        def mish(x: jax.Array):
+            return x * jnp.tanh(jax.nn.softplus(x))
+        agent, params = create_sdac_net_soft(init_network_key, obs_dim, act_dim, hidden_sizes, diffusion_hidden_sizes, mish,
+                                          num_timesteps=args.diffusion_steps, 
+                                          num_particles=args.num_particles, 
+                                          noise_scale=args.noise_scale,
+                                          target_entropy_scale=args.target_entropy_scale)
+        algorithm = SDAC_Soft(agent, params, lr=args.lr, alpha_lr=args.alpha_lr, 
+                           delay_alpha_update=args.delay_alpha_update,
+                             lr_schedule_end=args.lr_schedule_end,
+                             use_ema=args.use_ema_policy, beta=args.beta, exp_clip=args.exp_clip)
     elif args.alg == "qsm":
         agent, params = create_qsm_net(init_network_key, obs_dim, act_dim, hidden_sizes, num_timesteps=20, num_particles=args.num_particles)
         algorithm = QSM(agent, params, lr=args.lr, lr_schedule_end=args.lr_schedule_end)
