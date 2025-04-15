@@ -1,5 +1,5 @@
 '''
-Soft q learning diffusion policy with gumbel regression
+Soft q learning diffusion policy with robust reinforcement learning
 '''
 from typing import NamedTuple, Tuple
 
@@ -8,10 +8,11 @@ import numpy as np
 import optax
 import haiku as hk
 import pickle
+import distrax
 
 from relax.algorithm.base import Algorithm
 from relax.network.dacer import DACERNet, DACERParams
-from relax.network.sdac_soft import SDACNet, Diffv2Params
+from relax.network.sdac_soft_v2 import SDACNet, Diffv2Params
 from relax.utils.experience import Experience
 from relax.utils.typing import Metric
 
@@ -19,8 +20,8 @@ from relax.utils.typing import Metric
 class Diffv2OptStates(NamedTuple):
     q1: optax.OptState
     q2: optax.OptState
-    value: optax.OptState
     policy: optax.OptState
+    reward_a: optax.OptState
     log_alpha: optax.OptState
 
 
@@ -33,11 +34,11 @@ class Diffv2TrainState(NamedTuple):
     running_std: float
 
 class SDAC_Soft(Algorithm):
+
     def __init__(
         self,
         agent: SDACNet,
         params: Diffv2Params,
-        action_range: jax.Array,
         *,
         gamma: float = 0.99,
         lr: float = 1e-4,
@@ -49,9 +50,6 @@ class SDAC_Soft(Algorithm):
         reward_scale: float = 0.2,
         num_samples: int = 200,
         use_ema: bool = True,
-        beta: float = 1.0,
-        exp_clip: float = 10.0,
-        value_action_noise: float = 0.0,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -61,7 +59,6 @@ class SDAC_Soft(Algorithm):
         self.reward_scale = reward_scale
         self.num_samples = num_samples
         self.optim = optax.adam(lr)
-        self.value_optim = optax.adam(lr)
         lr_schedule = optax.schedules.linear_schedule(
             init_value=lr,
             end_value=lr_schedule_end,
@@ -69,6 +66,7 @@ class SDAC_Soft(Algorithm):
             transition_begin=int(2.5e4),
         )
         self.policy_optim = optax.adam(learning_rate=lr_schedule)
+        self.reward_optim = optax.adam(learning_rate=lr)
         self.alpha_optim = optax.adam(alpha_lr)
         self.entropy = 0.0
 
@@ -77,9 +75,9 @@ class SDAC_Soft(Algorithm):
             opt_state=Diffv2OptStates(
                 q1=self.optim.init(params.q1),
                 q2=self.optim.init(params.q2),
-                value=self.value_optim.init(params.value),
                 # policy=self.optim.init(params.policy),
                 policy=self.policy_optim.init(params.policy),
+                reward_a=self.reward_optim.init(params.reward_a),
                 log_alpha=self.alpha_optim.init(params.log_alpha),
             ),
             step=jnp.int32(0),
@@ -88,18 +86,15 @@ class SDAC_Soft(Algorithm):
             running_std=jnp.float32(1.0)
         )
         self.use_ema = use_ema
-        self.beta = beta
-        self.exp_clip = exp_clip
-        self.value_action_noise = value_action_noise
-        self.action_range = action_range
+        self.entropy_lambda = 0.1
 
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
         ) -> Tuple[Diffv2OptStates, Metric]:
             obs, action, reward, next_obs, done = data.obs, data.action, data.reward, data.next_obs, data.done
-            q1_params, q2_params, target_q1_params, target_q2_params, value_params, target_value_params, policy_params, target_policy_params, log_alpha = state.params
-            q1_opt_state, q2_opt_state, value_opt_state, policy_opt_state, log_alpha_opt_state = state.opt_state
+            q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, log_alpha = state.params
+            q1_opt_state, q2_opt_state, policy_opt_state, reward_a_opt_state, log_alpha_opt_state = state.opt_state
             step = state.step
             running_mean = state.running_mean
             running_std = state.running_std
@@ -113,20 +108,21 @@ class SDAC_Soft(Algorithm):
                 q2 = self.agent.q(q2_params, s, a)
                 q = jnp.minimum(q1, q2)
                 return q
-            
+
             def get_min_target_q(s, a):
                 q1 = self.agent.q(target_q1_params, s, a)
                 q2 = self.agent.q(target_q2_params, s, a)
                 q = jnp.minimum(q1, q2)
                 return q
 
-            # next_action = self.agent.get_action(next_eval_key, (policy_params, log_alpha, q1_params, q2_params), next_obs)
-            # q1_target = self.agent.q(target_q1_params, next_obs, next_action)
-            # q2_target = self.agent.q(target_q2_params, next_obs, next_action)
-            # q_target = jnp.minimum(q1_target, q2_target)  # - jnp.exp(log_alpha) * next_logp
-            # q_backup = reward + (1 - done) * self.gamma * q_target
             next_action = self.agent.get_action(next_eval_key, (policy_params, log_alpha, q1_params, q2_params), next_obs)
-            q_backup = reward + (1 - done) * self.gamma * self.agent.value(target_value_params, next_obs)
+            q1_target = self.agent.q(target_q1_params, next_obs, next_action)
+            q2_target = self.agent.q(target_q2_params, next_obs, next_action)
+            q_target = jnp.minimum(q1_target, q2_target)  # - jnp.exp(log_alpha) * next_logp
+            learned_reward_mu, learned_reward_sigma = self.agent.reward_a(reward_a_params, next_obs)
+            normal_dist = distrax.MultivariateNormalDiag(learned_reward_mu, learned_reward_sigma)
+            learned_reward = self.entropy_lambda * normal_dist.log_prob(next_action)
+            q_backup = reward - learned_reward + (1 - done) * self.gamma * q_target
 
             def q_loss_fn(q_params: hk.Params) -> jax.Array:
                 q = self.agent.q(q_params, obs, action)
@@ -140,34 +136,14 @@ class SDAC_Soft(Algorithm):
             q1_params = optax.apply_updates(q1_params, q1_update)
             q2_params = optax.apply_updates(q2_params, q2_update)
 
-            def gumbel_rescale_loss(value_params: hk.Params) -> jax.Array:
-                beta = self.beta
-                clip = self.exp_clip
-                pred = self.agent.value(value_params, obs)
-                rng = jax.random.PRNGKey(42)
-                rng, noise_rng = jax.random.split(rng)
-                #Note: xql uses q, should be target q 
-                if self.value_action_noise > 0.0:
-                    noise = jax.random.normal(noise_rng, shape=action.shape) * self.value_action_noise
-                    noise = jnp.clip(noise, -0.5, 0.5)
-                    noisy_action = jnp.clip(jax.lax.stop_gradient(action) + noise,
-                                            self.action_range[0],
-                                            self.action_range[1])
-                    label = get_min_target_q(obs, noisy_action)
-                    label = jax.lax.stop_gradient(label)
-                else:
-                    label = get_min_target_q(obs, action)
-                assert pred.shape == label.shape, "Shapes were incorrect"
-                z = (label - pred) / beta
-                if clip is not None:
-                    z = jnp.clip(z, -clip, clip)
-                max_z = jnp.max(z)
-                max_z = jnp.where(max_z < -1.0, -1.0, max_z)
-                max_z = jax.lax.stop_gradient(max_z)
-                loss = jnp.exp(z - max_z) - z * jnp.exp(-max_z) - jnp.exp(-max_z)
-                return jnp.mean(loss), max_z
-            
-            (value_loss, _), value_grads = jax.value_and_grad(gumbel_rescale_loss, has_aux=True)(value_params)
+
+            def reward_a_loss_fn(reward_a_params) -> jax.Array:
+                mu, sigma = self.agent.reward_a(reward_a_params, next_obs)
+                normal_dist = distrax.MultivariateNormalDiag(mu, sigma)
+                nll = -normal_dist.log_prob(next_action).mean(axis=-1)
+                return nll, mu 
+            (reward_a_loss, _), reward_a_grads = jax.value_and_grad(reward_a_loss_fn, has_aux=True)(reward_a_params)
+
 
             def policy_loss_fn(policy_params) -> jax.Array:
                 q_min = get_min_q(next_obs, next_action)
@@ -224,21 +200,20 @@ class SDAC_Soft(Algorithm):
 
             q1_params, q1_opt_state = param_update(self.optim, q1_params, q1_grads, q1_opt_state)
             q2_params, q2_opt_state = param_update(self.optim, q2_params, q2_grads, q2_opt_state)
-            value_params, value_opt_state = param_update(self.value_optim, value_params, value_grads, value_opt_state)
             policy_params, policy_opt_state = delay_param_update(self.policy_optim, policy_params, policy_grads, policy_opt_state)
+            reward_a_params, reward_a_opt_state = param_update(self.reward_optim, reward_a_params, reward_a_grads, reward_a_opt_state)
             log_alpha, log_alpha_opt_state = delay_alpha_param_update(self.alpha_optim, log_alpha, log_alpha_opt_state)
 
             target_q1_params = delay_target_update(q1_params, target_q1_params, self.tau)
             target_q2_params = delay_target_update(q2_params, target_q2_params, self.tau)
-            target_value_params = delay_target_update(value_params, target_value_params, self.tau)
             target_policy_params = delay_target_update(policy_params, target_policy_params, self.tau)
 
             new_running_mean = running_mean + 0.001 * (q_mean - running_mean)
             new_running_std = running_std + 0.001 * (q_std - running_std)
 
             state = Diffv2TrainState(
-                params=Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, value_params, target_value_params, policy_params, target_policy_params, log_alpha),
-                opt_state=Diffv2OptStates(q1=q1_opt_state, q2=q2_opt_state, value=value_opt_state, policy=policy_opt_state, log_alpha=log_alpha_opt_state),
+                params=Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, log_alpha),
+                opt_state=Diffv2OptStates(q1=q1_opt_state, q2=q2_opt_state, policy=policy_opt_state, reward_a=reward_a_opt_state, log_alpha=log_alpha_opt_state),
                 step=step + 1,
                 entropy=jnp.float32(0.0),
                 running_mean=new_running_mean,
@@ -250,8 +225,8 @@ class SDAC_Soft(Algorithm):
                 "q1_max": jnp.max(q1),
                 "q1_min": jnp.min(q1),
                 "q2_loss": q2_loss,
-                "value_loss": value_loss,
                 "policy_loss": total_loss,
+                "reward_nll_loss":reward_a_loss,
                 "alpha": jnp.exp(log_alpha),
                 "q_weights_std": jnp.std(q_weights),
                 "q_weights_mean": jnp.mean(q_weights),
