@@ -15,6 +15,7 @@ __pycache__/
 # Logs
 /logs/
 /output/
+/results/
 
 */.ipynb_checkpoints
 *.png
