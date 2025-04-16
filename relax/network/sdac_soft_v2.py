@@ -18,6 +18,7 @@ class Diffv2Params(NamedTuple):
     policy: hk.Params
     target_poicy: hk.Params
     reward_a: hk.Params
+    target_reward_a: hk.Params
     log_alpha: jax.Array
 
 
@@ -115,8 +116,9 @@ def create_sdac_net_soft(
         policy_params = policy.init(policy_key, obs, act, 0)
         target_policy_params = policy_params
         reward_a_params = reward_a.init(reward_a_key, obs)
+        target_reward_a_params = reward_a_params
         log_alpha = jnp.array(math.log(5), dtype=jnp.float32) # math.log(3) or math.log(5) choose one
-        return Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, log_alpha)
+        return Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, target_reward_a_params, log_alpha)
 
     sample_obs = jnp.zeros((1, obs_dim))
     sample_act = jnp.zeros((1, act_dim))

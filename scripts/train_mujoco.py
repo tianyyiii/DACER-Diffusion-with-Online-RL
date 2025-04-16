@@ -56,6 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--beta", type=float, default=1.0)
     parser.add_argument("--exp_clip", type=float, default=10.0)
     parser.add_argument("--value_action_noise", type=float, default=0.0)
+    parser.add_argument("--entropy_lambda", type=float, default=0.1)
     args = parser.parse_args()
 
     if args.debug:
@@ -122,7 +123,8 @@ if __name__ == "__main__":
         algorithm = SDAC_Soft_v2(agent, params, lr=args.lr, alpha_lr=args.alpha_lr, 
                            delay_alpha_update=args.delay_alpha_update,
                              lr_schedule_end=args.lr_schedule_end,
-                             use_ema=args.use_ema_policy)
+                             use_ema=args.use_ema_policy,
+                             entropy_lambda=args.entropy_lambda)
     elif args.alg == "qsm":
         agent, params = create_qsm_net(init_network_key, obs_dim, act_dim, hidden_sizes, num_timesteps=20, num_particles=args.num_particles)
         algorithm = QSM(agent, params, lr=args.lr, lr_schedule_end=args.lr_schedule_end)

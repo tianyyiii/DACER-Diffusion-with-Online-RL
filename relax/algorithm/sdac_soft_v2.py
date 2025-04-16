@@ -50,6 +50,7 @@ class SDAC_Soft(Algorithm):
         reward_scale: float = 0.2,
         num_samples: int = 200,
         use_ema: bool = True,
+        entropy_lambda: float=0.1,
     ):
         self.agent = agent
         self.gamma = gamma
@@ -86,14 +87,14 @@ class SDAC_Soft(Algorithm):
             running_std=jnp.float32(1.0)
         )
         self.use_ema = use_ema
-        self.entropy_lambda = 0.1
+        self.entropy_lambda = entropy_lambda
 
         @jax.jit
         def stateless_update(
             key: jax.Array, state: Diffv2TrainState, data: Experience
         ) -> Tuple[Diffv2OptStates, Metric]:
             obs, action, reward, next_obs, done = data.obs, data.action, data.reward, data.next_obs, data.done
-            q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, log_alpha = state.params
+            q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, target_reward_a_params, log_alpha = state.params
             q1_opt_state, q2_opt_state, policy_opt_state, reward_a_opt_state, log_alpha_opt_state = state.opt_state
             step = state.step
             running_mean = state.running_mean
@@ -119,7 +120,7 @@ class SDAC_Soft(Algorithm):
             q1_target = self.agent.q(target_q1_params, next_obs, next_action)
             q2_target = self.agent.q(target_q2_params, next_obs, next_action)
             q_target = jnp.minimum(q1_target, q2_target)  # - jnp.exp(log_alpha) * next_logp
-            learned_reward_mu, learned_reward_sigma = self.agent.reward_a(reward_a_params, next_obs)
+            learned_reward_mu, learned_reward_sigma = self.agent.reward_a(target_reward_a_params, next_obs)
             normal_dist = distrax.MultivariateNormalDiag(learned_reward_mu, learned_reward_sigma)
             learned_reward = self.entropy_lambda * normal_dist.log_prob(next_action)
             q_backup = reward - learned_reward + (1 - done) * self.gamma * q_target
@@ -207,12 +208,13 @@ class SDAC_Soft(Algorithm):
             target_q1_params = delay_target_update(q1_params, target_q1_params, self.tau)
             target_q2_params = delay_target_update(q2_params, target_q2_params, self.tau)
             target_policy_params = delay_target_update(policy_params, target_policy_params, self.tau)
+            target_reward_a_params = delay_target_update(reward_a_params, target_reward_a_params, self.tau)
 
             new_running_mean = running_mean + 0.001 * (q_mean - running_mean)
             new_running_std = running_std + 0.001 * (q_std - running_std)
 
             state = Diffv2TrainState(
-                params=Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, log_alpha),
+                params=Diffv2Params(q1_params, q2_params, target_q1_params, target_q2_params, policy_params, target_policy_params, reward_a_params, target_reward_a_params, log_alpha),
                 opt_state=Diffv2OptStates(q1=q1_opt_state, q2=q2_opt_state, policy=policy_opt_state, reward_a=reward_a_opt_state, log_alpha=log_alpha_opt_state),
                 step=step + 1,
                 entropy=jnp.float32(0.0),
