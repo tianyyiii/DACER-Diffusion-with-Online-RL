@@ -150,9 +150,10 @@ class SDAC_Soft(Algorithm):
                 q_min = get_min_q(next_obs, next_action)
                 q_mean, q_std = q_min.mean(), q_min.std()
                 norm_q = q_min - running_mean / running_std
-                scaled_q = norm_q.clip(-3., 3.) / jnp.exp(log_alpha)
+                scaled_q = norm_q * (1 - self.entropy_lambda) / self.entropy_lambda
+                scaled_q = scaled_q.clip(-3., 3.)
+                # scaled_q = norm_q.clip(-3., 3.) / jnp.exp(log_alpha) * (1 - jnp.exp(log_alpha))
                 q_weights = jnp.exp(scaled_q)
-                # q_weights = q_weights
                 def denoiser(t, x):
                     return self.agent.policy(policy_params, next_obs, x, t)
                 t = jax.random.randint(diffusion_time_key, (next_obs.shape[0],), 0, self.agent.num_timesteps)
