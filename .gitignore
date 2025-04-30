@@ -24,3 +24,4 @@ __pycache__/
 *.sh
 *.out
 /relax/evaluate/
+/scripts/inspect_results.py

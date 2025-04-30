@@ -63,6 +63,7 @@ def load_best_results(pattern, env_name, show_df=False,
     total_df = pd.concat(dfs, ignore_index=True, axis=1).T
     if show_df:
         print(total_df.to_markdown())
+    print(total_df['avg_ret'])
     print(f"${total_df['avg_ret'].mean():.2f} \pm {total_df['avg_ret'].std():.2f}$")
     return total_df
 
@@ -81,11 +82,17 @@ if __name__ == "__main__":
     #     for pattern in patterns_dict:
     #         print(pattern)
     #         load_best_results(patterns_dict[pattern], env)
-    for env in ["Ant-v4", "Reacher-v4", "Pusher-v4", "Walker2d-v4"]:
+    for env in ["Ant-v4"]:
         patterns_dict = {
-            'lambda_0.0': r".*/sdac.*random_seed_101_105",
-            'lambda_0.01': r".*/sdac_soft_v2.*random_seed_100_104_new_entropy_lambda_0.01",
-            'lambda_0.05': r".*/sdac_soft_v2.*random_seed_100_104_new_entropy_lambda_0.05",
+            'sdac': r".*/sdac.*random_seed_101_105$",
+            'sdac_no_alpha': r".*/sdac.*random_seed_101_105_no_alpha_noise",
+            'lambda_0.0': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0\.0/?$",
+            'lambda_0.01': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0.01",
+            'lambda_0.05': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0.05",
+            'lambda_0.1': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0.1",
+            'lambda_0.2': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0.2",
+            'lambda_0.5': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_0.5",
+            'lambda_1.0': r".*/sdac_soft_v2.*random_seed_100_104_no_alpha_num_particle_2_entropy_lambda_1.0",
         }
         plot_mean(patterns_dict, env, f"figures/{env}_sdac.png")
         for pattern in patterns_dict:
