@@ -107,6 +107,12 @@ class ProcessVectorEnv(VectorEnv):
         self._notify(0b01)
         self._wait()
         return self.obs2.copy(), self.reward.copy(), self.terminated.copy(), self.truncated.copy(), {}
+    
+    def stateless_step(self, action: np.ndarray):
+        self.action[:] = action
+        self._notify(0b11)
+        self._wait()
+        return self.obs2.copy(), self.reward.copy(), self.terminated.copy(), self.truncated.copy(), {}
 
     def close(self):
         self._notify(0b10)

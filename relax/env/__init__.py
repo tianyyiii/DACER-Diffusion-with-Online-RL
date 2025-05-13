@@ -48,6 +48,14 @@ class RelaxWrapper(Wrapper):
             action += self.original_action_center
         obs, reward, terminated, truncated, info = self.env.step(action)
         return obs.astype(np.float32, copy=False), reward, terminated, truncated, info
+    
+    def stateless_step(self, action: np.ndarray):
+        action = action.astype(self.original_action_dtype)
+        if self.needs_rescale:
+            action *= self.original_action_half_range
+            action += self.original_action_center
+        obs, reward, terminated, truncated, info = self.env.stateless_step(action)
+        return obs.astype(np.float32, copy=False), reward, terminated, truncated, info
 
 def create_env(name: str, seed: int, action_seed: int = 0):
     env = make(name)

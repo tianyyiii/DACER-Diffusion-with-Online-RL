@@ -78,6 +78,20 @@ def main():
                 for env in envs:
                     env.close()
                 break
+            elif command == 0b11:
+                for i, env in zip(indices, envs):
+                    qpos = env.unwrapped.data.qpos.copy()
+                    qvel = env.unwrapped.data.qvel.copy()
+                    elapsed = env._elapsed_steps
+                    _obs2, _reward, _terminated, _truncated, _ = env.step(action[i])
+                    env.unwrapped.set_state(qpos, qvel)
+                    env._elapsed_steps = elapsed
+                    obs2[i] = _obs2
+                    reward[i] = _reward
+                    terminated[i] = _terminated
+                    truncated[i] = _truncated
+                    obs[i] = _obs2
+                futex_client_notify(signal_pointer)
             else:
                 raise ValueError(f"Unknown command: {command}")
     except KeyboardInterrupt:
