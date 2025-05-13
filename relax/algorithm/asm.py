@@ -8,7 +8,7 @@ import pickle
 
 from relax.algorithm.base import Algorithm
 from relax.network.dacer import DACERNet, DACERParams
-from relax.network.sdac import SDACNet, Diffv2Params
+from relax.network.asm import SDACNet, Diffv2Params
 from relax.utils.experience import Experience
 from relax.utils.typing import Metric
 
@@ -243,7 +243,7 @@ class SDAC(Algorithm):
             }
             return state, info
 
-        self._implement_common_behavior(stateless_update, self.agent.get_action, self.agent.get_deterministic_action)
+        self._implement_common_behavior(stateless_update, self.agent.get_action, self.agent.get_deterministic_action, self.agent.get_noisy_action)
 
     def get_policy_params(self):
         return (self.state.params.policy, self.state.params.log_alpha, self.state.params.q1, self.state.params.q2 )
@@ -261,6 +261,6 @@ class SDAC(Algorithm):
         return np.asarray(action)
     
     def get_noisy_action(self, key: jax.Array, obs: np.ndarray) -> np.ndarray:
-        action = self.agent.get_noisy_action(key, self.get_policy_params_to_save(), obs)
+        action = self._get_noisy_action(key, self.get_policy_params_to_save(), obs)
         return np.asarray(action)
     

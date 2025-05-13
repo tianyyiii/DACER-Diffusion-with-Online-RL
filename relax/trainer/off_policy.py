@@ -123,23 +123,15 @@ class OffPolicyTrainer:
     def sample(self, sample_key: jax.Array, obs: np.ndarray):
         sl = self.sample_log
 
-        if np.random.rand() < 1.0:
-            start_time = time.time()
-            action = self.algorithm.get_action(sample_key, obs)
-            next_obs, reward, terminated, truncated, info = self.env.step(action)
-            end_time = time.time()
-            jax.debug.print("get action")
-            jax.debug.print(str(end_time - start_time))
-        else:
-            start_time = time.time()
-            action = self.algorithm.get_noisy_action(sample_key, obs)
-            next_obs, reward, terminated, truncated, info = self.env.stateless_step(action)
-            end_time = time.time()
-            jax.debug.print("get noisy action")
-            jax.debug.print(str(end_time - start_time))
+        # if np.random.rand() < 0.2:
+        #     action = self.algorithm.get_action(sample_key, obs)
+        #     next_obs, reward, terminated, truncated, info = self.env.step(action)
+        # else:
+        #     action = self.algorithm.get_noisy_action(sample_key, obs)
+        #     next_obs, reward, terminated, truncated, info = self.env.stateless_step(action)
 
-        # action = self.algorithm.get_action(sample_key, obs)
-        # next_obs, reward, terminated, truncated, info = self.env.step(action)
+        action = self.algorithm.get_action(sample_key, obs)
+        next_obs, reward, terminated, truncated, info = self.env.step(action)
 
         experience = Experience.create(obs, action, reward, terminated, truncated, next_obs, info)
         if self.is_vec:
