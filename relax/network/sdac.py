@@ -50,7 +50,7 @@ class SDACNet:
 
         key, noise_key = jax.random.split(key)
         if self.num_particles == 1:
-            act = sample(key)
+            act = sample(key)[0]
         else:
             keys = jax.random.split(key, self.num_particles)
             acts, qs = jax.vmap(sample)(keys)
@@ -70,14 +70,28 @@ class SDACNet:
         best_action = jax.vmap(slice, (0, 0))(batch_action, max_q_idx)
         return best_action
 
-
-
     def get_deterministic_action(self, policy_params: hk.Params, obs: jax.Array) -> jax.Array:
         key = random_key_from_data(obs)
         policy_params, log_alpha, q1_params, q2_params = policy_params
         log_alpha = -jnp.inf
         policy_params = (policy_params, log_alpha, q1_params, q2_params)
         return self.get_action(key, policy_params, obs)
+    
+    def get_vanilla_action(self, key: jax.Array, policy_params: hk.Params, obs: jax.Array) -> jax.Array:
+        policy_params, log_alpha, q1_params, q2_params = policy_params
+
+        def model_fn(t, x):
+            return self.policy(policy_params, obs, x, t)
+
+        def sample(key: jax.Array) -> Union[jax.Array, jax.Array]:
+            act = self.diffusion.p_sample(key, model_fn, (*obs.shape[:-1], self.act_dim))
+            q1 = self.q(q1_params, obs, act)
+            q2 = self.q(q2_params, obs, act)
+            q = jnp.minimum(q1, q2)
+            return act.clip(-1, 1), q
+
+        act = sample(key)[0]
+        return act
 
     def q_evaluate(
         self, key: jax.Array, q_params: hk.Params, obs: jax.Array, act: jax.Array
